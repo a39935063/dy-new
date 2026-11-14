@@ -156,14 +156,8 @@ export function clearRateLimit(ip: string): void {
   attemptMap.delete(ip);
 }
 
-// 定期清理过期限流记录，避免长期运行下 Map 膨胀
-if (typeof setInterval === 'function') {
-  const timer = setInterval(() => {
-    const now = Date.now();
-    for (const [ip, entry] of attemptMap) {
-      if (now > entry.resetAt) attemptMap.delete(ip);
-    }
-  }, 60 * 1000);
-  // 不阻止 Node 进程退出
-  if (typeof timer.unref === 'function') timer.unref();
-}
+// 注意：不要在这里加顶层 setInterval 做定期清理——Cloudflare Workers
+// 禁止全局作用域的定时器/异步 I/O，模块一被 import 就会 500。
+// 过期条目由 checkRateLimit 按 resetAt 惰性替换，Workers 实例生命周期短，
+// Map 不会无限膨胀。
+
