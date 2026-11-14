@@ -85,12 +85,22 @@ interface DohResponse {
 
 const DOH_URL = 'https://cloudflare-dns.com/dns-query';
 
+// DNS 解析结果缓存：同一主机名在 TTL 内只查一次 DoH。
+// 搜索一次要对每个源做多次校验（显式预检 + 每次 fetch 的包装器校验），
+// 不缓存时同一主机名会重复查 A/AAAA，子请求数会撑爆 Workers 单次调用 50 上限。
+// Workers 实例生命周期短，5 分钟 TTL 足够且不会长期持有过期解析。
+const DNS_CACHE_TTL_MS = 5 * 60 * 1000;
+const dnsCache = new Map<string, { addresses: string[]; expiresAt: number }>();
+
 /**
  * 用 DNS-over-HTTPS 解析主机名，返回全部解析到的 IP 地址（A + AAAA）。
  * 查询走安装包装器之前捕获的原始 fetch，不经过 SSRF 包装器，避免递归。
  * 单个类型查询失败不阻断，返回已拿到的地址（可能为空）。
  */
 async function dohLookup(hostname: string): Promise<string[]> {
+  const now = Date.now();
+  const cached = dnsCache.get(hostname);
+  if (cached && now < cached.expiresAt) return cached.addresses;
   if (!nativeFetch) return [];
   const addresses: string[] = [];
   const results = await Promise.all(
@@ -114,6 +124,7 @@ async function dohLookup(hostname: string): Promise<string[]> {
     })
   );
   void results;
+  dnsCache.set(hostname, { addresses, expiresAt: Date.now() + DNS_CACHE_TTL_MS });
   return addresses;
 }
 
